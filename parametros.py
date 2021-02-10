@@ -1,3 +1,5 @@
+import datetime
+
 class Parametros:
     dtIni = None
     sourcePath = None
@@ -7,19 +9,32 @@ class Parametros:
     DT_INI = "-dtIni"
     SOURCE = "-source"
     TARGET = "-target"
+    PIPELINE = "-pipeline"
 
     def __init__(self, args):
-        if self.DT_INI in args and self.TARGET in args and self.SOURCE in args:
+        if self.DT_INI in args or self.TARGET in args or self.SOURCE in args or self.PIPELINE in args:
             mapValues = self.createMapArgs(args)
-            self.dtIni = mapValues[self.DT_INI]
-            self.sourcePath = mapValues[self.SOURCE]
-            self.targetPath = mapValues[self.TARGET]
-        elif not (self.DT_INI in args):
-            self.exception(f'Parâmetro {self.DT_INI} necessario!')
-        elif not (self.TARGET in args):
-            self.exception(f'Parâmetro {self.TARGET} necessario!')
-        elif (not (self.SOURCE in args)):
-            self.exception(f'Parâmetro {self.SOURCE} necessario!')
+            if self.DT_INI in args:
+                self.dtIni = mapValues[self.DT_INI]
+            else:
+                self.dtIni = (datetime.datetime.now()).strftime("%Y%m%d")
+
+            if self.PIPELINE in args:
+                self.pipeline = int(mapValues[self.PIPELINE])
+            else:
+                self.pipeline = 1
+
+            if self.SOURCE in args:
+                self.sourcePath = mapValues[self.SOURCE]
+            else:
+                self.exception(f'Parâmetro {self.SOURCE} necessario!')
+
+            if self.TARGET in args:
+                self.targetPath = mapValues[self.TARGET]
+            else:
+                self.targetPath = "shift-geolife-tragetories"
+        else:
+            self.exception(f'Parâmetros necessarios!')
 
     def createMapArgs(self, args):
         lenghtArgs = len(args)

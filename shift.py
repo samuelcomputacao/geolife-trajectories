@@ -68,7 +68,7 @@ class Shift:
     semaphoreFolder = None
 
     PATH_PIPE = 'pipe'
-
+    processed_last = 0
     def __init__(self, files, parameters):
         self.files = files
         self.total = files.fileLenght
@@ -90,6 +90,10 @@ class Shift:
             firstName = listFiles[0].getName()
 
             numCpu = multiprocessing.cpu_count()
+
+            if self.parameters.pipeline < numCpu:
+                numCpu = self.parameters.pipeline
+
             listPartitioned = self.getPartition(listFiles, numCpu)
             threads = []
             for i in range(0, numCpu):
@@ -206,7 +210,7 @@ class Shift:
             sys.stdout.write("\r" + label)
             sys.stdout.flush()
             idx += 1
-            time.sleep(1)
+            time.sleep(0.4)
 
         timeEnd = datetime.datetime.now() - timeStart
         label = "Processing: ..... 100.00%% Time: %f" % timeEnd
@@ -220,7 +224,9 @@ class Shift:
             for line in file:
                 num = int(line.strip())
             file.close()
-        return num
+        if num != self.processed_last and num != 0:
+            self.processed_last = num
+        return self.processed_last
 
     def incrementProcessed(self, value=1):
         self.semaphore.acquire()
