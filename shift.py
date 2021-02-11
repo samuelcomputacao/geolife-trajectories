@@ -1,6 +1,5 @@
 import datetime
 import sys
-import threading
 import multiprocessing
 import time
 import os
