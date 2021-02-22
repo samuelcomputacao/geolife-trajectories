@@ -62,11 +62,13 @@ class Shift:
 
     finishAnimated = None
     semaphore = None
+    semaphoreAnimated = None
 
     parameters = None
     semaphoreFolder = None
 
     PATH_PIPE = 'pipe'
+    PATH_PIPE_ANIMATED = 'pipe_animated'
     processed_last = 0
     def __init__(self, files, parameters):
         self.files = files
@@ -74,13 +76,14 @@ class Shift:
         self.processed = 0
         self.indexAnimated = 0
         self.semaphore = multiprocessing.Semaphore()
+        self.semaphoreAnimated = multiprocessing.Semaphore()
         self.parameters = parameters
         self.threads = 0
         self.semaphoreFolder = multiprocessing.Semaphore()
         self.removePipe()
 
     def shiftDate(self):
-        self.finishAnimated = False
+        self.setFinishAnimated(False)
         th = multiprocessing.Process(target=self.printProcessAnimated)
         th.start()
         for key in self.files.metaData.keys():
@@ -102,13 +105,15 @@ class Shift:
 
             for i in range(0, numCpu):
                 threads[i].join()
-
-        self.finishAnimated = True
-        self.removePipe()
+        
+        self.setFinishAnimated(True)
 
     def removePipe(self):
         if os.path.exists(self.PATH_PIPE):
             os.remove(self.PATH_PIPE)
+        if os.path.exists(self.PATH_PIPE_ANIMATED):
+            os.remove(self.PATH_PIPE_ANIMATED)
+
 
     def getPartition(self, list, parts):
         result = [[] for i in range(0, parts)]
@@ -197,10 +202,11 @@ class Shift:
         targetFile.close()
         self.incrementProcessed()
 
+
     def printProcessAnimated(self):
         idx = 1
         timeStart = datetime.datetime.now()
-        while not self.finishAnimated:
+        while not self.getFinishAnimated():
             if idx > 5:
                 idx = 1
             percent = self.getProcessed() * 100 / self.total
@@ -212,9 +218,10 @@ class Shift:
             time.sleep(0.4)
 
         timeEnd = datetime.datetime.now() - timeStart
-        label = "Processing: ..... 100.00%% Time: %f" % timeEnd
+        label = "Processing: ..... 100.00%% Time: %s" % str(timeEnd)
         sys.stdout.write("\r" + label)
         sys.stdout.flush()
+        self.removePipe()
 
     def getProcessed(self):
         num = 0
@@ -235,3 +242,24 @@ class Shift:
         file.write(str(num))
         file.close()
         self.semaphore.release()
+    
+    def getFinishAnimated(self):
+        self.semaphoreAnimated.acquire()
+        num = 0
+        if os.path.exists(self.PATH_PIPE_ANIMATED):
+            file = open(self.PATH_PIPE_ANIMATED, 'r')
+            for line in file:
+                num = int(line.strip())
+            file.close()
+        self.semaphoreAnimated.release()
+        return True if num > 0 else False
+    
+    def setFinishAnimated(self, value):
+        self.semaphoreAnimated.acquire()
+        num = 1 if value else 0
+        file = open(self.PATH_PIPE_ANIMATED, 'w')
+        file.write(str(num))
+        file.close()
+        self.semaphoreAnimated.release()
+
+
