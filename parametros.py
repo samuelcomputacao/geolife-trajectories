@@ -17,7 +17,7 @@ class Parametros:
             if self.DT_INI in args:
                 self.dtIni = mapValues[self.DT_INI]
             else:
-                self.dtIni = (datetime.datetime.now()).strftime("%Y%m%d")
+                self.dtIni = (datetime.datetime.now()).strftime("%Y%m%d%H%M%S")
 
             if self.PIPELINE in args:
                 self.pipeline = int(mapValues[self.PIPELINE])

@@ -9,7 +9,7 @@ from shutil import copyfile
 def processDate(dateStr, dateFutureStr, baseDateStr):
     firstDate = datetime.datetime.strptime(dateStr, '%Y%m%d%H%M%S')
     dateFuture = datetime.datetime.strptime(dateFutureStr, '%Y%m%d%H%M%S')
-    baseDate = datetime.datetime.strptime(baseDateStr[0:8] + dateStr[-6:], '%Y%m%d%H%M%S')
+    baseDate = datetime.datetime.strptime(baseDateStr, '%Y%m%d%H%M%S')
     diferenceDate = dateFuture - firstDate
     baseDate = baseDate + datetime.timedelta(days=diferenceDate.days)
     baseDate = baseDate + datetime.timedelta(seconds=diferenceDate.seconds)
