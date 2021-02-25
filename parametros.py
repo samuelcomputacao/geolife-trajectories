@@ -5,14 +5,16 @@ class Parametros:
     sourcePath = None
     targetPath = None
     pipeline = None
+    delta = None
 
     DT_INI = "-dtIni"
     SOURCE = "-source"
     TARGET = "-target"
     PIPELINE = "-pipeline"
+    DELTA = "-delta"
 
     def __init__(self, args):
-        if self.DT_INI in args or self.TARGET in args or self.SOURCE in args or self.PIPELINE in args:
+        if self.SOURCE in args:
             mapValues = self.createMapArgs(args)
             if self.DT_INI in args:
                 self.dtIni = mapValues[self.DT_INI]
@@ -33,6 +35,9 @@ class Parametros:
                 self.targetPath = mapValues[self.TARGET]
             else:
                 self.targetPath = "shift-geolife-tragetories"
+
+            if self.DELTA in args:
+                self.delta = int(mapValues[self.DELTA])
         else:
             self.exception(f'Parâmetros necessarios!')
 

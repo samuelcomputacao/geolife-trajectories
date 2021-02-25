@@ -6,14 +6,35 @@ import os
 from shutil import copyfile
 
 
+def convertStringToDate(dateStr, fmt='%Y%m%d%H%M%S'):
+    return datetime.datetime.strptime(dateStr, fmt)
+
+
+def convertDateToString(date, fmt='%Y%m%d%H%M%S'):
+    return datetime.datetime.strftime(date, fmt)
+
+
 def processDate(dateStr, dateFutureStr, baseDateStr):
-    firstDate = datetime.datetime.strptime(dateStr, '%Y%m%d%H%M%S')
-    dateFuture = datetime.datetime.strptime(dateFutureStr, '%Y%m%d%H%M%S')
-    baseDate = datetime.datetime.strptime(baseDateStr, '%Y%m%d%H%M%S')
-    diferenceDate = dateFuture - firstDate
-    baseDate = baseDate + datetime.timedelta(days=diferenceDate.days)
-    baseDate = baseDate + datetime.timedelta(seconds=diferenceDate.seconds)
-    return baseDate
+    try:
+        firstDate = convertStringToDate(dateStr)
+        dateFuture = convertStringToDate(dateFutureStr)
+        baseDate = convertStringToDate(baseDateStr)
+        diferenceDate = dateFuture - firstDate
+        baseDate = baseDate + datetime.timedelta(days=diferenceDate.days)
+        baseDate = baseDate + datetime.timedelta(seconds=diferenceDate.seconds)
+        return baseDate
+    except Exception:
+        pass
+
+
+def isDate(string, fmt='%Y%m%d%H%M%S'):
+    retorno = False
+    try:
+        convertStringToDate(string, fmt)
+        retorno = True
+    except Exception:
+        pass
+    return retorno
 
 
 def getExtensionList(file):
@@ -70,6 +91,7 @@ class Shift:
     PATH_PIPE = 'pipe'
     PATH_PIPE_ANIMATED = 'pipe_animated'
     processed_last = 0
+
     def __init__(self, files, parameters):
         self.files = files
         self.total = files.fileLenght
@@ -82,6 +104,9 @@ class Shift:
         self.semaphoreFolder = multiprocessing.Semaphore()
         self.removePipe()
 
+    def isTimeDelta(self):
+        self.parameters.delta is None
+
     def shiftDate(self):
         self.setFinishAnimated(False)
         th = multiprocessing.Process(target=self.printProcessAnimated)
@@ -92,20 +117,25 @@ class Shift:
             firstName = listFiles[0].getName()
 
             numCpu = multiprocessing.cpu_count()
-
             if self.parameters.pipeline < numCpu:
                 numCpu = self.parameters.pipeline
 
-            listPartitioned = self.getPartition(listFiles, numCpu)
+            listPartitioned, titles = [], []
+            if not self.isTimeDelta() and isDate(firstName, '%Y%m%d%H%M%S'):
+                listPartitioned, titles = self.getPartition(listFiles, numCpu)
+            else:
+                listPartitioned, titles = self.getPartition(listFiles, numCpu)
+
             threads = []
             for i in range(0, numCpu):
-                thread = multiprocessing.Process(target=self.processFiles, args=(listPartitioned[i], firstName))
+                thread = multiprocessing.Process(target=self.processFiles,
+                                                 args=(listPartitioned[i], firstName, titles[i]))
                 thread.start()
                 threads.append(thread)
 
             for i in range(0, numCpu):
                 threads[i].join()
-        
+
         self.setFinishAnimated(True)
 
     def removePipe(self):
@@ -114,30 +144,50 @@ class Shift:
         if os.path.exists(self.PATH_PIPE_ANIMATED):
             os.remove(self.PATH_PIPE_ANIMATED)
 
-
     def getPartition(self, list, parts):
-        result = [[] for i in range(0, parts)]
+        list.sort()
+        resultFiles = [[] for i in range(0, parts)]
+        resultTitles = [[] for i in range(0, parts)]
         idx = 0
         lenght = len(list)
         count = 0
+        lastTitle = None
         while idx < lenght:
+            file = list[idx]
             if count >= parts:
                 count = 0
-            result[count].append(list[idx])
+            resultFiles[count].append(file)
+            title = file.getName()
+            if not self.isTimeDelta():
+                if isDate(file.getName()):
+                    if idx > 0:
+                        fileReader = open(list[idx - 1].path, 'r')
+                        size = sum([1 for line in fileReader]) - 6
+                        fileReader.close()
+
+                        lasteDate = convertStringToDate(lastTitle)
+                        futureDate = lasteDate + datetime.timedelta(seconds=size * self.parameters.delta)
+                        title = convertDateToString(futureDate)
+                    else:
+                        title = self.parameters.dtIni
+
+            resultTitles[count].append(title)
+            lastTitle = title
             count += 1
             idx += 1
-        return result
 
-    def processFiles(self, files, firstName):
-        for file in files:
-            self.processFile(file, firstName)
+        return resultFiles, resultTitles
 
-    def processFile(self, file, firstName):
+    def processFiles(self, files, firstName, titles):
+        for i in range(len(files)):
+            self.processFile(files[i], firstName, titles[i])
+
+    def processFile(self, file, firstName, title):
         if file.isFile:
             if "labels" == file.getName() and "txt" == file.getExtension():
                 self.processFileTXT(file)
             elif "plt" == file.getExtension():
-                self.processFilePLT(file, firstName)
+                self.processFilePLT(file, firstName, title)
             else:
                 self.processFileDefault(file)
 
@@ -179,8 +229,9 @@ class Shift:
             os.makedirs(targetFolder)
         self.semaphoreFolder.release()
 
-    def processFilePLT(self, fileSource, firstDateStr):
-        dtIni = processDate(firstDateStr, fileSource.getName(), self.parameters.dtIni)
+    def processFilePLT(self, fileSource, firstDateStr, title):
+        dtIni = processDate(firstDateStr, fileSource.getName(),
+                            self.parameters.dtIni) if self.isTimeDelta() else convertStringToDate(title)
         file = open(fileSource.path, 'r')
         targetPath = fileSource.path.replace(self.parameters.sourcePath, self.parameters.targetPath).replace(
             fileSource.getName(), dtIni.strftime("%Y%m%d%H%M%S"))
@@ -188,20 +239,27 @@ class Shift:
         targetFile = open(targetPath, 'w')
         offset = 6
         cont = 0
+        lastLineDateStr = None
         for line in file:
             lineStr = line.strip()
             if cont < offset:
                 cont += 1
             else:
                 line = line.strip().split(",")
-                lineDateStr = (line[5] + line[6]).replace("-", "").replace(":", "")
-                lineDate = processDate(fileSource.getName(), lineDateStr, dtIni.strftime("%Y%m%d%H%M%S"))
+                if self.isTimeDelta():
+                    lineDateStr = (line[5] + line[6]).replace("-", "").replace(":", "")
+                    lineDate = processDate(fileSource.getName(), lineDateStr, dtIni.strftime("%Y%m%d%H%M%S"))
+                elif lastLineDateStr is None:
+                    lineDate = convertStringToDate(title)
+                else:
+                    lastLineDate = convertStringToDate(lastLineDateStr)
+                    lineDate = lastLineDate + datetime.timedelta(seconds=self.parameters.delta)
+                lastLineDateStr = convertDateToString(lineDate)
                 lineStr = f'{line[0]},{line[1]},{line[2]},{line[3]},{line[4]},{lineDate.strftime("%Y-%m-%d,%H:%M:%S")}'
             targetFile.write(lineStr + '\n')
         file.close()
         targetFile.close()
         self.incrementProcessed()
-
 
     def printProcessAnimated(self):
         idx = 1
@@ -242,7 +300,7 @@ class Shift:
         file.write(str(num))
         file.close()
         self.semaphore.release()
-    
+
     def getFinishAnimated(self):
         self.semaphoreAnimated.acquire()
         num = 0
@@ -253,7 +311,7 @@ class Shift:
             file.close()
         self.semaphoreAnimated.release()
         return True if num > 0 else False
-    
+
     def setFinishAnimated(self, value):
         self.semaphoreAnimated.acquire()
         num = 1 if value else 0
@@ -261,5 +319,3 @@ class Shift:
         file.write(str(num))
         file.close()
         self.semaphoreAnimated.release()
-
-
