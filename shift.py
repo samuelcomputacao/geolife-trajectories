@@ -76,6 +76,20 @@ def getDateFuturePLT(path):
     return dates[0]
 
 
+def removeFolder(path):
+    files = os.listdir(path)
+    for file in files:
+        removeFile(f'{path}/{file}')
+
+
+def removeFile(path):
+    if os.path.exists(path):
+        if os.path.isfile(path):
+            os.remove(path)
+        else:
+            removeFolder(path)
+            os.rmdir(path)
+
 class Shift:
     total = None
     processed = None
@@ -87,10 +101,14 @@ class Shift:
 
     parameters = None
     semaphoreFolder = None
+    semaphoreLabels = None
 
     PATH_PIPE = 'pipe'
     PATH_PIPE_ANIMATED = 'pipe_animated'
+    PATH_PIPE_LABELS = 'tmp/'
     processed_last = 0
+
+    mapLabels = {}
 
     def __init__(self, files, parameters):
         self.files = files
@@ -102,47 +120,88 @@ class Shift:
         self.parameters = parameters
         self.threads = 0
         self.semaphoreFolder = multiprocessing.Semaphore()
+        self.semaphoreLabels = multiprocessing.Semaphore()
         self.removePipe()
+        removeFile(self.parameters.targetPath)
 
     def isTimeDelta(self):
-        self.parameters.delta is None
+        return self.parameters.delta is not None
 
     def shiftDate(self):
         self.setFinishAnimated(False)
         th = multiprocessing.Process(target=self.printProcessAnimated)
         th.start()
+        numCpu = multiprocessing.cpu_count()
+        if self.parameters.pipeline < numCpu:
+            numCpu = self.parameters.pipeline
+        threads = []
         for key in self.files.metaData.keys():
             listFiles = self.files.metaData[key]
             listFiles.sort()
             firstName = listFiles[0].getName()
 
-            numCpu = multiprocessing.cpu_count()
-            if self.parameters.pipeline < numCpu:
-                numCpu = self.parameters.pipeline
-
             listPartitioned, titles = [], []
-            if not self.isTimeDelta() and isDate(firstName, '%Y%m%d%H%M%S'):
+
+            if self.isTimeDelta() and isDate(firstName, '%Y%m%d%H%M%S'):
                 listPartitioned, titles = self.getPartition(listFiles, numCpu)
             else:
                 listPartitioned, titles = self.getPartition(listFiles, numCpu)
 
-            threads = []
             for i in range(0, numCpu):
                 thread = multiprocessing.Process(target=self.processFiles,
-                                                 args=(listPartitioned[i], firstName, titles[i]))
+                                                 args=(listPartitioned[i], firstName, titles[i],))
                 thread.start()
                 threads.append(thread)
 
-            for i in range(0, numCpu):
-                threads[i].join()
+            for th in threads:
+                th.join()
+                th.kill()
+            threads.clear()
 
+        # Processando arquivo Labels
+        threads.clear()
+        labels = []
+        for key in self.files.metaData.keys():
+            listFiles = self.files.metaData[key]
+            for file in listFiles:
+                if file.getName() == 'labels':
+                    labels.append(file)
+
+        listPartitionedLabels = self.getPartitionLabels(labels, numCpu)
+        for i in range(0, numCpu):
+            thread = multiprocessing.Process(target=self.processFilesLabels,
+                                             args=(listPartitionedLabels[i],))
+            thread.start()
+            threads.append(thread)
+
+        for thr in threads:
+            thr.join()
+            thr.kill()
         self.setFinishAnimated(True)
 
+    def processFilesLabels(self, files):
+        for file in files:
+            self.processFileLabel(file)
+
+    def getPartitionLabels(self, files, parts):
+        cont = 0
+        idx = 0
+        lenght = len(files)
+        result = [[] for i in range(parts)]
+        while idx < lenght:
+            file = files[idx]
+            if cont >= parts:
+                cont = 0
+            if file.getName() == 'labels':
+                result[cont].append(file)
+                cont += 1
+            idx += 1
+        return result
+
     def removePipe(self):
-        if os.path.exists(self.PATH_PIPE):
-            os.remove(self.PATH_PIPE)
-        if os.path.exists(self.PATH_PIPE_ANIMATED):
-            os.remove(self.PATH_PIPE_ANIMATED)
+        removeFile(self.PATH_PIPE)
+        removeFile(self.PATH_PIPE_ANIMATED)
+        removeFile(self.PATH_PIPE_LABELS)
 
     def getPartition(self, list, parts):
         list.sort()
@@ -158,7 +217,7 @@ class Shift:
                 count = 0
             resultFiles[count].append(file)
             title = file.getName()
-            if not self.isTimeDelta():
+            if self.isTimeDelta():
                 if isDate(file.getName()):
                     if idx > 0:
                         fileReader = open(list[idx - 1].path, 'r')
@@ -185,7 +244,7 @@ class Shift:
     def processFile(self, file, firstName, title):
         if file.isFile:
             if "labels" == file.getName() and "txt" == file.getExtension():
-                self.processFileTXT(file)
+                pass
             elif "plt" == file.getExtension():
                 self.processFilePLT(file, firstName, title)
             else:
@@ -197,12 +256,13 @@ class Shift:
         copyfile(file.path, targetPath)
         self.incrementProcessed()
 
-    def processFileTXT(self, file):
+    def processFileLabel(self, file):
+        id = file.path.split('/')[-2]
+        mapLabels = self.getKeyMapLabels(id)
         sourceFile = open(file.path, 'r')
         targetPath = file.path.replace(self.parameters.sourcePath, self.parameters.targetPath)
         self.createFolder(targetPath)
         targetFile = open(targetPath, 'w')
-        date = getDateFutureLabels(file.path)
         offset = 1
         cont = 0
         for line in sourceFile:
@@ -213,9 +273,28 @@ class Shift:
                 line = line.split("\t")
                 dateStartStr = line[0].strip().replace("/", "").replace(" ", "").replace(":", "")
                 dateFinishStr = line[1].strip().replace("/", "").replace(" ", "").replace(":", "")
+                if not dateStartStr in mapLabels.keys():
+                    keys = list(mapLabels.keys())
+                    keys.append(dateStartStr)
+                    keys.sort()
+                    index = keys.index(dateStartStr)
+                    if index > 0:
+                        dateStartStr = keys[index - 1]
+                    else:
+                        dateStartStr = keys[index + 1]
+
+                if not dateFinishStr in mapLabels.keys():
+                    keys = list(mapLabels.keys())
+                    keys.append(dateFinishStr)
+                    keys.sort()
+                    index = keys.index(dateFinishStr)
+                    if index > 0:
+                        dateFinishStr = keys[index - 1]
+                    else:
+                        dateFinishStr = keys[index + 1]
+                dateStart = convertStringToDate(mapLabels[dateStartStr])
+                dateFinish = convertStringToDate(mapLabels[dateFinishStr])
                 mode = line[2].strip()
-                dateStart = processDate(date, dateStartStr, self.parameters.dtIni)
-                dateFinish = processDate(date, dateFinishStr, self.parameters.dtIni)
                 lineStr = f'{dateStart.strftime("%Y/%m/%d %H:%M:%S")}\t{dateFinish.strftime("%Y/%m/%d %H:%M:%S")}\t{mode}'
             targetFile.write(lineStr + '\n')
         targetFile.close()
@@ -231,7 +310,7 @@ class Shift:
 
     def processFilePLT(self, fileSource, firstDateStr, title):
         dtIni = processDate(firstDateStr, fileSource.getName(),
-                            self.parameters.dtIni) if self.isTimeDelta() else convertStringToDate(title)
+                            self.parameters.dtIni) if not self.isTimeDelta() else convertStringToDate(title)
         file = open(fileSource.path, 'r')
         targetPath = fileSource.path.replace(self.parameters.sourcePath, self.parameters.targetPath).replace(
             fileSource.getName(), dtIni.strftime("%Y%m%d%H%M%S"))
@@ -245,9 +324,10 @@ class Shift:
             if cont < offset:
                 cont += 1
             else:
-                line = line.strip().split(",")
-                if self.isTimeDelta():
-                    lineDateStr = (line[5] + line[6]).replace("-", "").replace(":", "")
+                lineStr = lineStr.split(",")
+                lastDate = (lineStr[5] + lineStr[6]).replace("-", "").replace(":", "")
+                if not self.isTimeDelta():
+                    lineDateStr = lastDate
                     lineDate = processDate(fileSource.getName(), lineDateStr, dtIni.strftime("%Y%m%d%H%M%S"))
                 elif lastLineDateStr is None:
                     lineDate = convertStringToDate(title)
@@ -255,8 +335,11 @@ class Shift:
                     lastLineDate = convertStringToDate(lastLineDateStr)
                     lineDate = lastLineDate + datetime.timedelta(seconds=self.parameters.delta)
                 lastLineDateStr = convertDateToString(lineDate)
-                lineStr = f'{line[0]},{line[1]},{line[2]},{line[3]},{line[4]},{lineDate.strftime("%Y-%m-%d,%H:%M:%S")}'
+                lineStr = f'{lineStr[0]},{lineStr[1]},{lineStr[2]},{lineStr[3]},{lineStr[4]},{lineDate.strftime("%Y-%m-%d,%H:%M:%S")}'
+                key = fileSource.path.split('/')[-3]
+                self.addKeyMapLabels(key, lastDate, convertDateToString(lineDate, "%Y%m%d%H%M%S"))
             targetFile.write(lineStr + '\n')
+
         file.close()
         targetFile.close()
         self.incrementProcessed()
@@ -268,12 +351,14 @@ class Shift:
             if idx > 5:
                 idx = 1
             percent = self.getProcessed() * 100 / self.total
+            if percent > 100:
+                percent = 100
             timeEnd = datetime.datetime.now() - timeStart
             label = "Processing: %s %.2f%% Time: %s" % (("." * idx + (6 - idx) * " "), percent, str(timeEnd))
             sys.stdout.write("\r" + label)
             sys.stdout.flush()
             idx += 1
-            time.sleep(0.4)
+            time.sleep(0.5)
 
         timeEnd = datetime.datetime.now() - timeStart
         label = "Processing: ..... 100.00%% Time: %s" % str(timeEnd)
@@ -319,3 +404,24 @@ class Shift:
         file.write(str(num))
         file.close()
         self.semaphoreAnimated.release()
+
+    def addKeyMapLabels(self, key, lastDate, newDate):
+        self.semaphoreLabels.acquire()
+        if not os.path.exists(self.PATH_PIPE_LABELS):
+            os.makedirs(self.PATH_PIPE_LABELS)
+        path = self.PATH_PIPE_LABELS + key
+        file = open(path, "a" if os.path.exists(path) else "w")
+        file.write(f'{lastDate}->{newDate}\n')
+        file.close()
+        self.semaphoreLabels.release()
+
+    def getKeyMapLabels(self, path):
+        result = {}
+        path = self.PATH_PIPE_LABELS + path
+        if os.path.exists(path):
+            file = open(path, 'r')
+            for line in file:
+                lineStr = line.split('->')
+                result[lineStr[0].strip()] = lineStr[1].strip()
+            file.close()
+        return result
