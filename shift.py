@@ -155,7 +155,6 @@ class Shift:
 
             for th in threads:
                 th.join()
-                th.kill()
             threads.clear()
 
         # Processando arquivo Labels
@@ -176,7 +175,6 @@ class Shift:
 
         for thr in threads:
             thr.join()
-            thr.kill()
         self.setFinishAnimated(True)
 
     def processFilesLabels(self, files):
